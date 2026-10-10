@@ -1,7 +1,7 @@
 # Code-To-Algorithm Audit, 2026-10-10
 
-Scope: paper commit `0eb18795aadbae5ada65915be39dbe56ea50bfcf`,
-data-evidence commit `68e0158e5d3cd2a23ca9bfd957868db66cfe56cf`, and the
+Scope: paper commit `79514dd5e3d0247cc56d6752ef2e2e1f6059cca6`,
+data-evidence commit `e039b9119162d2d60cc69968bd0a460df42fdb4e`, and the
 public mirror runners under `fairness/`.
 
 ## Findings
@@ -20,8 +20,9 @@ complaint-bearing rows.
 
 Resolution: the paper appendix now says "validation group-denominator masses"
 in Overleaf paper commit `cd69ad8afaa25131ff70981af7a960b895e77ae4`.
-The evidence repository records the audit and regression test in commit
-`05212d1558ae8eff930511b9b78a2f8939075876`.
+The current evidence repository records the audit, regression test, raw-proxy
+rerun, and selected-policy mass closure in commit
+`e039b9119162d2d60cc69968bd0a460df42fdb4e`.
 
 The second audit finding was an implementation mismatch. The public-group and
 W16-style candidate generators used auxiliary `log1p(A)` and `log1p(B)`
@@ -86,7 +87,10 @@ Comparator LP:
 
 The denominator wording error is fixed in the paper. The auxiliary log-proxy
 mismatch required a rerun and has been repaired in the evidence bundle. The
-current paper headline after the raw-scale repair is median lift `+0.5010`,
+selected-policy mass accounting gate is also closed in the evidence bundle:
+2,484/2,484 value-unit selected policies now have exact repaired mass rows.
+
+The current paper headline after the raw-scale repair is median lift `+0.5010`,
 source signs `7/0/0`, and two-sided cluster p-value `0.008106` at the primary
 `.95` floor. The previous budget-repaired headline was `+0.6131` with signs
 `6/0/1`; the repair makes the effect smaller but directionally cleaner.
@@ -106,6 +110,7 @@ Independent Mac replay passed for 120 splits / 360 models / 1,335,600 rows;
 headline verification checked 3891 selection rows, LP verification checked
 920 cells, and 14 tests passed. Paper generated tables match the data.
 
-Completion remains pending for 691 selected-policy objection-mass records,
-final Overleaf rendering and the full review harness. Previous all-PASS or
-old-PDF reports do not certify the current paper.
+Selected-policy objection-mass records are now complete: 2,484/2,484
+value-unit selected policies have exact repaired mass rows and zero validation
+budget violations. Final Overleaf rendering and the full review harness remain
+pending. Previous all-PASS or old-PDF reports do not certify the current paper.

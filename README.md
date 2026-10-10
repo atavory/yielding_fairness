@@ -47,7 +47,8 @@ parity baseline. See [the audit](docs/code_algorithm_audit_20261010.md).
 
 Independent replay checked 120 splits, 360 saved models and 1,335,600 candidate
 rows against raw inputs in the evidence bundle. Exact objection-mass reporting
-for 691 selected policies and final paper rendering/review remain unfinished.
+is now complete for 2,484/2,484 value-unit selected policies; final paper
+rendering/review remain unfinished.
 
 ## Inputs
 
