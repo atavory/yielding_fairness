@@ -90,3 +90,22 @@ current paper headline after the raw-scale repair is median lift `+0.5010`,
 source signs `7/0/0`, and two-sided cluster p-value `0.008106` at the primary
 `.95` floor. The previous budget-repaired headline was `+0.6131` with signs
 `6/0/1`; the repair makes the effect smaller but directionally cleaner.
+
+## Accepted method and verification boundary
+
+Auxiliary regressions minimize squared error on raw nonnegative outcomes.
+Training-only centering/scaling are inverted, then negative predictions are
+projected to zero; value proxies used in ratios have a 1e-9 numerical floor.
+This does not assert exact conditional-mean recovery by a finite linear model.
+The separate log-damped score-learning robustness comparison is unaffected.
+
+Current eligibility is 149 paired cells, versus 180 before the repair. Therefore
++0.6131 to +0.5010 is not a prediction-only change on an identical sample.
+The exact seven-source sign-flip p is 0.0078125 one-sided and 0.015625 two-sided.
+Independent Mac replay passed for 120 splits / 360 models / 1,335,600 rows;
+headline verification checked 3891 selection rows, LP verification checked
+920 cells, and 14 tests passed. Paper generated tables match the data.
+
+Completion remains pending for 691 selected-policy objection-mass records,
+final Overleaf rendering and the full review harness. Previous all-PASS or
+old-PDF reports do not certify the current paper.

@@ -25,6 +25,30 @@ The package includes:
 
 Supply local copies of the public datasets when running the scripts.
 
+## Fairness outcome models
+
+The current fairness runners train W-BCE on raw value and loss. Separate
+squared-error linear regressions fit raw value and loss targets for complaint
+construction. Training-only centering and scaling are inverted at prediction;
+negative predicted means are projected to zero, and value proxies used in ratios
+have a 1e-9 numerical floor. The auxiliary targets are not logged.
+
+This replaces the earlier log1p-target auxiliary regressions. Main raw W-BCE
+training was already correct. The separately labelled log-damped W-BCE
+score-learning robustness comparison remains distinct.
+
+The regenerated seven-source comparison at the `.95` validation capture floor
+has median held-out closure lift +0.5010, source signs 7/0/0, and two-sided
+source-cluster p=0.008106 over 149 eligible paired cells. The previous +0.6131
+result used 180 cells and superseded log proxies; the eligibility change is
+part of the old/new comparison. Fixed block-count and blocked-value parity
+comparisons are mixed, so these numbers do not support dominance over every
+parity baseline. See [the audit](docs/code_algorithm_audit_20261010.md).
+
+Independent replay checked 120 splits, 360 saved models and 1,335,600 candidate
+rows against raw inputs in the evidence bundle. Exact objection-mass reporting
+for 691 selected policies and final paper rendering/review remain unfinished.
+
 ## Inputs
 
 - Australian MTPL: `ausprivauto0405.rda` from CASdatasets.
