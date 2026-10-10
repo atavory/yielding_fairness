@@ -1,11 +1,10 @@
 # Code-To-Algorithm Audit, 2026-10-10
 
-Scope: paper commit `bd2620f2f1d524153907d51e1528463f8adbc005`
-before the wording fix, data-evidence commit
-`09ba617fa737cb140e734beeb2ebd8626e0709e6`, and the live
-group-complaint scripts.
+Scope: paper commit `0eb18795aadbae5ada65915be39dbe56ea50bfcf`,
+data-evidence commit `68e0158e5d3cd2a23ca9bfd957868db66cfe56cf`, and the
+public mirror runners under `fairness/`.
 
-## Finding
+## Findings
 
 The implementation and theorem use group-denominator normalization for the
 group-aware complaint price. The appendix sentence saying the group family is
@@ -24,12 +23,20 @@ in Overleaf paper commit `cd69ad8afaa25131ff70981af7a960b895e77ae4`.
 The evidence repository records the audit and regression test in commit
 `05212d1558ae8eff930511b9b78a2f8939075876`.
 
+The second audit finding was an implementation mismatch. The public-group and
+W16-style candidate generators used auxiliary `log1p(A)` and `log1p(B)`
+regressions, then exponentiated predictions to provide value/loss proxies for
+complaint construction. That does not estimate the raw conditional means used
+by the population theory. The repaired public runners now fit raw-scale linear
+mean regressions with nonnegative prediction clipping.
+
 ## Implementation Map
 
 Score construction:
 
 - Public fairness reruns use linear weighted-logistic W-BCE fit on training rows
-  plus separate linear log1p regressions for positive value and loss proxies.
+  plus separate raw-scale linear regressions for positive value and loss
+  proxies.
 - Frozen W-BCE logits are replayed as loss/value odds: `exp(score)` is
   multiplied by `estimated_value` to recover the fitted loss side before
   complaint prices are applied.
@@ -77,7 +84,9 @@ Comparator LP:
 
 ## Status
 
-No model rerun is required for this discrepancy. It was a paper wording error,
-not an implementation error. The existing repaired CSVs still match the
-intended algorithm after replacing "complaint rates" with
-"group-denominator masses."
+The denominator wording error is fixed in the paper. The auxiliary log-proxy
+mismatch required a rerun and has been repaired in the evidence bundle. The
+current paper headline after the raw-scale repair is median lift `+0.5010`,
+source signs `7/0/0`, and two-sided cluster p-value `0.008106` at the primary
+`.95` floor. The previous budget-repaired headline was `+0.6131` with signs
+`6/0/1`; the repair makes the effect smaller but directionally cleaner.

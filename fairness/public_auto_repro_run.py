@@ -50,8 +50,12 @@ def main():
                   'source_sha256':{str(p.relative_to(ROOT)):sha(p) for p in sources},
                   'raw_repository':'https://github.com/dutangc/CASdatasets', 'raw_commit':RAW_COMMIT,
                   'command':[sys.executable,*sys.argv],
-                  'packages':{name:importlib.metadata.version(name) for name in ['numpy','pandas','scipy','rdata']},
-                  'package_freeze':subprocess.check_output([sys.executable,'-m','pip','freeze'],text=True).splitlines(),
+                  'packages':{name:importlib.metadata.version(name) for name in ['numpy','pandas','scipy']},
+                  'package_freeze':sorted(
+                      f"{dist.metadata['Name']}=={dist.version}"
+                      for dist in importlib.metadata.distributions()
+                      if dist.metadata.get('Name')
+                  ),
                   'compute':{'device':'CPU','blas_threads':{k:os.environ.get(k) for k in ['OPENBLAS_NUM_THREADS','OMP_NUM_THREADS']}},
                   'config':{'datasets':DATASETS,'sampling_seed':42,'max_n':50000,'seeds':list(range(10)),
                             'steps':800,'target':.1,'net_lambda':1.,'split':'64/16/20 stratified by loss occurrence',
@@ -92,19 +96,21 @@ def main():
                     assert np.array_equal(np.sort(np.r_[train,validation,test]),indices)
                     xtr,xva,xte = c.transform(frame,numeric,categorical,train,validation,test)
                     wc,wb = c.fit_wbce(xtr,loss[train],value[train],500000+seed,args.steps)
-                    vc,vb = c._adam_l1p(xtr,value[train],args.steps,seed+1)
-                    lc,lb = c._adam_l1p(xtr,loss[train],args.steps,seed+2)
+                    vc,vb,vl,vs = c.fit_raw_mean_regression(xtr,value[train],args.steps,seed+1)
+                    lc,lb,ll,ls = c.fit_raw_mean_regression(xtr,loss[train],args.steps,seed+2)
                     val_score = xva@wc+wb
-                    val_a = np.maximum(c.predict_l1p(xva,vc,vb),1e-9)
-                    val_b = c.predict_l1p(xva,lc,lb)
+                    val_a = np.maximum(c.predict_raw_mean(xva,vc,vb,vl,vs),1e-9)
+                    val_b = c.predict_raw_mean(xva,lc,lb,ll,ls)
                     policies = c.policy_thresholds(val_score,group[validation],value[validation],loss[validation],.1)
                     criteria = c.criterion_thresholds(val_score,val_a,val_b,value[validation],.1,1.)
                     snapshot = {'train_ids':train,'validation_ids':validation,'test_ids':test,
                                 'wbce_coef':wc,'wbce_intercept':np.array(wb),'value_coef':vc,'value_intercept':np.array(vb),
-                                'loss_coef':lc,'loss_intercept':np.array(lb)}
+                                'value_location':np.array(vl),'value_scale':np.array(vs),
+                                'loss_coef':lc,'loss_intercept':np.array(lb),
+                                'loss_location':np.array(ll),'loss_scale':np.array(ls)}
                     for split,ids,design in [('validation',validation,xva),('test',test,xte)]:
                         score=design@wc+wb
-                        a=np.maximum(c.predict_l1p(design,vc,vb),1e-9); b=c.predict_l1p(design,lc,lb)
+                        a=np.maximum(c.predict_raw_mean(design,vc,vb,vl,vs),1e-9); b=c.predict_raw_mean(design,lc,lb,ll,ls)
                         assert np.isfinite(score).all() and np.isfinite(a).all() and np.isfinite(b).all()
                         selected={p:c.select_by_thresholds(score,group[ids],threshold) for p,threshold in policies.items()}
                         crit_scores=c.criterion_scores(score,a,b,1.)

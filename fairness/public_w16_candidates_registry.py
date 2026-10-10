@@ -1,7 +1,7 @@
 """Generalized candidate-level objection logger.
 
-Reuses the Australian W16 ML core (numpy W-BCE + two log1p plug-in regressions,
-validation-frozen criterion thresholds) but takes any registered dataset that
+Reuses the Australian W16 ML core (numpy W-BCE + two raw-scale plug-in
+regressions, validation-frozen criterion thresholds) but takes any registered dataset that
 yields (features, label, value_A, loss_B, group). Emits the VERBOSE candidate
 schema that `summarize_w16_objection_penalty.py` already accepts, so the same
 objection/grievance postprocessor runs unchanged per dataset.
@@ -68,9 +68,15 @@ def fit_wbce(x, loss, value, seed, steps):
     return _adam_logistic(xf, yf, w, steps, seed)
 
 
-def _adam_l1p(x, y, steps, seed):
+def fit_raw_mean(x, y, steps, seed):
     rng = np.random.default_rng(seed)
-    x = x.astype(np.float64); tgt = np.log1p(np.maximum(y.astype(np.float64), 0.0))
+    x = x.astype(np.float64)
+    tgt = np.maximum(y.astype(np.float64), 0.0)
+    loc = float(tgt.mean()) if len(tgt) else 0.0
+    scale_y = float(tgt.std(ddof=0)) if len(tgt) else 1.0
+    if scale_y <= 1e-12:
+        scale_y = 1.0
+    tgt = (tgt - loc) / scale_y
     coef = rng.normal(0, 1e-3, size=x.shape[1]); b = float(tgt.mean()) if len(tgt) else 0.0
     cm = np.zeros_like(coef); cv = np.zeros_like(coef); bm = bv = 0.0
     b1, b2, lr, l2 = 0.9, 0.999, 0.03, 1e-4
@@ -82,11 +88,11 @@ def _adam_l1p(x, y, steps, seed):
         bm = b1 * bm + (1 - b1) * gb; bv = b2 * bv + (1 - b2) * gb * gb
         coef -= lr * (cm / (1 - b1**t)) / (np.sqrt(cv / (1 - b2**t)) + 1e-8)
         b -= lr * (bm / (1 - b1**t)) / (math.sqrt(bv / (1 - b2**t)) + 1e-8)
-    return coef, b
+    return coef, b, loc, scale_y
 
 
-def predict_l1p(x, coef, b):
-    return np.expm1(np.clip(x.astype(np.float64) @ coef + b, 0.0, 20.0))
+def predict_raw_mean(x, coef, b, loc, scale_y):
+    return np.maximum((x.astype(np.float64) @ coef + b) * scale_y + loc, 0.0)
 
 
 def threshold_for_mass(scores, mass, frac):
@@ -344,12 +350,12 @@ def main():
             tr, va, te = account_nested_split(account, label, seed)
         xtr, xva, xte = transform(frame, numeric, categorical, tr, va, te)
         wc, wb = fit_wbce(xtr, loss_B[tr], value_A[tr], 500_000 + seed, args.steps)
-        vc, vb = _adam_l1p(xtr, value_A[tr], args.steps, seed + 1)
-        lc, lb = _adam_l1p(xtr, loss_B[tr], args.steps, seed + 2)
+        vc, vb, vl, vs = fit_raw_mean(xtr, value_A[tr], args.steps, seed + 1)
+        lc, lb, ll, ls = fit_raw_mean(xtr, loss_B[tr], args.steps, seed + 2)
         for split, ix, xe in (("validation", va, xva), ("test", te, xte)):
             score = xe @ wc + wb
-            ah = np.maximum(predict_l1p(xe, vc, vb), 1e-9)
-            bh = predict_l1p(xe, lc, lb)
+            ah = np.maximum(predict_raw_mean(xe, vc, vb, vl, vs), 1e-9)
+            bh = predict_raw_mean(xe, lc, lb, ll, ls)
             crit = {
                 "wbce_ratio": score,
                 "harm": bh,

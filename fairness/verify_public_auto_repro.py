@@ -13,7 +13,6 @@ import pandas as pd
 import public_group_candidates as c
 
 ROOT=Path(__file__).resolve().parents[1]
-OUTPUT=ROOT/'outputs/public_auto_repro'
 
 
 def sha(path):
@@ -28,7 +27,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--raw-repo',type=Path,required=True)
     args=parser.parse_args()
-    output=OUTPUT
+    output=ROOT/'outputs/public_auto_repro'
     provenance_path=output/'PROVENANCE.json'
     provenance=json.loads(provenance_path.read_text())
     assert provenance['status']=='complete'
@@ -79,7 +78,13 @@ def main():
                 maximum_score_error=max(maximum_score_error,float(np.max(np.abs(score-frozen[split+'_score']))))
                 assert np.allclose(score,frozen[split+'_score'],atol=1e-8,rtol=1e-10)
                 for prefix in ['value','loss']:
-                    predicted=np.expm1(np.clip(design@frozen[prefix+'_coef']+frozen[prefix+'_intercept'],0.,20.))
+                    predicted=c.predict_raw_mean(
+                        design,
+                        frozen[prefix+'_coef'],
+                        float(frozen[prefix+'_intercept']),
+                        float(frozen[prefix+'_location']),
+                        float(frozen[prefix+'_scale']),
+                    )
                     if prefix=='value': predicted=np.maximum(predicted,1e-9)
                     assert np.allclose(predicted,frozen[split+'_estimated_'+prefix],atol=1e-8,rtol=1e-10)
                 assert np.array_equal(frozen[split+'_value'],value[ids]) and np.array_equal(frozen[split+'_loss'],loss[ids])

@@ -14,25 +14,215 @@ from pathlib import Path
 
 import numpy as np
 
+from export_cas_rda_to_csv import load_data_frame  # noqa: E402
 from public_w16_candidates_registry import (  # noqa: E402
     CRITERIA,
+    AGE_PATS,
+    AMOUNT_PATS,
+    EXCL_FEAT,
+    EXPO_PATS,
+    GENDER_PATS,
     REGISTRY,
-    _adam_l1p,
+    _find,
     account_nested_split,
     fit_wbce,
-    predict_l1p,
     stratified_split,
     threshold_for_mass,
     transform,
 )
 
 
-def load_euhealth_gender(path: str, n: int, seed: int):
-    import rdata
+def rda_frame(path: str):
     import pandas as pd
 
-    obj = rdata.read_rda(path)
-    frame = pd.DataFrame(obj["euhealthinsurance"])
+    names, columns = load_data_frame(Path(path))
+    return pd.DataFrame({name: column for name, column in zip(names, columns, strict=True)})
+
+
+def fit_raw_mean_regression(
+    x: np.ndarray,
+    y: np.ndarray,
+    steps: int,
+    seed: int,
+) -> tuple[np.ndarray, float, float, float]:
+    rng = np.random.default_rng(seed)
+    x = x.astype(np.float64)
+    target = np.maximum(y.astype(np.float64), 0.0)
+    location = float(target.mean()) if len(target) else 0.0
+    scale = float(target.std(ddof=0)) if len(target) else 1.0
+    if scale <= 1e-12:
+        scale = 1.0
+    target = (target - location) / scale
+    coef = rng.normal(0, 1e-3, size=x.shape[1])
+    intercept = float(target.mean()) if len(target) else 0.0
+    coef_m = np.zeros_like(coef)
+    coef_v = np.zeros_like(coef)
+    intercept_m = 0.0
+    intercept_v = 0.0
+    beta1, beta2, learning_rate, l2 = 0.9, 0.999, 0.03, 1e-4
+    sample_scale = max(float(len(target)), 1.0)
+    for step in range(1, steps + 1):
+        residual = x @ coef + intercept - target
+        grad_coef = (x.T @ residual) / sample_scale + l2 * coef
+        grad_intercept = float(residual.mean()) if len(residual) else 0.0
+        coef_m = beta1 * coef_m + (1.0 - beta1) * grad_coef
+        coef_v = beta2 * coef_v + (1.0 - beta2) * grad_coef * grad_coef
+        intercept_m = beta1 * intercept_m + (1.0 - beta1) * grad_intercept
+        intercept_v = beta2 * intercept_v + (1.0 - beta2) * grad_intercept**2
+        coef -= (
+            learning_rate
+            * (coef_m / (1.0 - beta1**step))
+            / (np.sqrt(coef_v / (1.0 - beta2**step)) + 1e-8)
+        )
+        intercept -= (
+            learning_rate
+            * (intercept_m / (1.0 - beta1**step))
+            / (math.sqrt(intercept_v / (1.0 - beta2**step)) + 1e-8)
+        )
+    return coef, float(intercept), location, scale
+
+
+def predict_raw_mean(
+    x: np.ndarray,
+    coef: np.ndarray,
+    intercept: float,
+    location: float,
+    scale: float,
+) -> np.ndarray:
+    predicted = (x.astype(np.float64) @ coef + intercept) * scale + location
+    return np.maximum(predicted, 0.0)
+
+
+def load_belgian_public(path: str, n: int, seed: int):
+    import pandas as pd
+
+    frame = rda_frame(path)
+    amount = pd.to_numeric(frame["amount"], errors="coerce").fillna(0).to_numpy(np.float64)
+    expo = pd.to_numeric(frame["expo"], errors="coerce").fillna(0).to_numpy(np.float64)
+    sex = frame["sex"].astype(str).to_numpy()
+    valid = expo > 0
+    frame, amount, expo, sex = (
+        frame.loc[valid].reset_index(drop=True),
+        amount[valid],
+        expo[valid],
+        sex[valid],
+    )
+    label = (amount > 0).astype(np.float64)
+    if n and n < len(frame):
+        rng = np.random.default_rng(seed)
+        keep = rng.choice(len(frame), n, replace=False)
+        frame, amount, expo, sex, label = (
+            frame.iloc[keep].reset_index(drop=True),
+            amount[keep],
+            expo[keep],
+            sex[keep],
+            label[keep],
+        )
+    value = expo * (1.0 - label)
+    loss = amount
+    numeric = ["expo", "ageph", "bm", "power", "agec", "long", "lat"]
+    categorical = ["coverage", "fuel", "use", "fleet"]
+    return frame, numeric, categorical, label, value, loss, sex, "beMTPL97", None
+
+
+def generic_load_public(path: str, n: int, seed: int):
+    import pandas as pd
+
+    frame = rda_frame(path)
+    frame.columns = [str(column) for column in frame.columns]
+    columns = list(frame.columns)
+    exposure_column = _find(columns, EXPO_PATS)
+    amount_column = _find(
+        columns,
+        AMOUNT_PATS,
+        exclude=["average", "nclaim", "claimnb", "claimnumber", "claimcount", "claimind", "claimfreq"],
+    )
+    if not exposure_column or not amount_column or exposure_column == amount_column:
+        raise RuntimeError(
+            f"missing exposure/amount columns: exposure={exposure_column}, amount={amount_column}"
+        )
+    amount = (
+        pd.to_numeric(frame[amount_column], errors="coerce")
+        .fillna(0.0)
+        .clip(lower=0.0)
+        .to_numpy(dtype=np.float64)
+    )
+    exposure = (
+        pd.to_numeric(frame[exposure_column], errors="coerce")
+        .fillna(0.0)
+        .to_numpy(dtype=np.float64)
+    )
+    valid = exposure > 0.0
+    frame = frame.loc[valid].reset_index(drop=True)
+    amount = amount[valid]
+    exposure = exposure[valid]
+    label = (amount > 0.0).astype(np.float64)
+    if label.sum() < 30 or (1.0 - label).sum() < 30:
+        raise RuntimeError(f"degenerate labels: positives={int(label.sum())}")
+    value = exposure * (1.0 - label)
+    loss = amount
+    group_column = _find(columns, GENDER_PATS)
+    age_column = _find(columns, AGE_PATS)
+    group_source = None
+    if group_column:
+        group = frame[group_column].astype(str).to_numpy()
+        group_attribute = group_column
+        group_source = group_column
+    elif age_column:
+        age = pd.to_numeric(frame[age_column], errors="coerce")
+        median_age = float(age.median())
+        group = np.where(age.to_numpy() <= median_age, "young", "old")
+        group_attribute = f"{age_column}_bin"
+        group_source = age_column
+    else:
+        group = np.array(["all"] * len(frame))
+        group_attribute = "none"
+    unique_groups, counts = np.unique(group, return_counts=True)
+    if len(unique_groups) > 2:
+        top_group = unique_groups[int(np.argmax(counts))]
+        group = np.where(group == top_group, str(top_group), "other")
+
+    numeric: list[str] = []
+    categorical: list[str] = []
+    for column in columns:
+        if column == group_source:
+            continue
+        normalized = "".join(ch for ch in str(column).lower() if ch.isalnum())
+        if column != exposure_column and any(excluded in normalized for excluded in EXCL_FEAT):
+            continue
+        if column == amount_column:
+            continue
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if values.notna().mean() > 0.8:
+            numeric.append(column)
+        elif frame[column].astype(str).nunique() <= 20:
+            categorical.append(column)
+    if not numeric and not categorical:
+        raise RuntimeError("no usable features")
+    features = frame[list(dict.fromkeys(numeric + categorical))].copy()
+    if n and len(features) > n:
+        rng = np.random.default_rng(seed)
+        keep = rng.choice(len(features), n, replace=False)
+        features = features.iloc[keep].reset_index(drop=True)
+        label, value, loss, group = label[keep], value[keep], loss[keep], group[keep]
+    dataset_name = Path(path).name.replace(".rda", "")
+    return (
+        features,
+        numeric,
+        categorical,
+        label,
+        value,
+        loss,
+        group,
+        f"{dataset_name}[{group_attribute}]",
+        None,
+    )
+
+
+def load_euhealth_gender(path: str, n: int, seed: int):
+    import pandas as pd
+
+    frame = rda_frame(path)
     amount_columns = [column for column in frame.columns if str(column).startswith("amt_")]
     total_amount = (
         frame[amount_columns]
@@ -274,6 +464,8 @@ def load_german_credit(path: str, n: int, seed: int, attribute: str):
 
 LOCAL_REGISTRY = {
     **REGISTRY,
+    "auto": generic_load_public,
+    "belgian": load_belgian_public,
     "euhealth_gender": load_euhealth_gender,
     "german_credit_age": lambda path, n, seed: load_german_credit(path, n, seed, "age"),
     "german_credit_sex": lambda path, n, seed: load_german_credit(path, n, seed, "sex"),
@@ -547,13 +739,13 @@ def main() -> None:
             500_000 + seed,
             args.steps,
         )
-        value_coef, value_intercept = _adam_l1p(
+        value_coef, value_intercept, value_location, value_scale = fit_raw_mean_regression(
             x_train,
             value[train_idx],
             args.steps,
             seed + 1,
         )
-        loss_coef, loss_intercept = _adam_l1p(
+        loss_coef, loss_intercept, loss_location, loss_scale = fit_raw_mean_regression(
             x_train,
             loss[train_idx],
             args.steps,
@@ -561,8 +753,17 @@ def main() -> None:
         )
 
         val_scores = x_val @ wbce_coef + wbce_intercept
-        val_estimated_value = np.maximum(predict_l1p(x_val, value_coef, value_intercept), 1e-9)
-        val_estimated_loss = predict_l1p(x_val, loss_coef, loss_intercept)
+        val_estimated_value = np.maximum(
+            predict_raw_mean(x_val, value_coef, value_intercept, value_location, value_scale),
+            1e-9,
+        )
+        val_estimated_loss = predict_raw_mean(
+            x_val,
+            loss_coef,
+            loss_intercept,
+            loss_location,
+            loss_scale,
+        )
         policies = policy_thresholds(
             val_scores,
             group[val_idx],
@@ -585,10 +786,22 @@ def main() -> None:
         ):
             split_scores = design @ wbce_coef + wbce_intercept
             split_estimated_value = np.maximum(
-                predict_l1p(design, value_coef, value_intercept),
+                predict_raw_mean(
+                    design,
+                    value_coef,
+                    value_intercept,
+                    value_location,
+                    value_scale,
+                ),
                 1e-9,
             )
-            split_estimated_loss = predict_l1p(design, loss_coef, loss_intercept)
+            split_estimated_loss = predict_raw_mean(
+                design,
+                loss_coef,
+                loss_intercept,
+                loss_location,
+                loss_scale,
+            )
             split_group = group[split_idx]
             policy_selected = {
                 policy: select_by_thresholds(split_scores, split_group, thresholds)

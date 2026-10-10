@@ -20,7 +20,8 @@ The package includes:
   `fairness/verify_public_auto_repro.py`: frozen held public-auto reproduction
   and verification scripts with source, split, model, and output provenance.
 - `docs/code_algorithm_audit_20261010.md`: the implementation-to-algorithm audit
-  that resolved the group-price denominator wording discrepancy.
+  covering the group-price denominator wording fix and the raw-scale auxiliary
+  proxy repair.
 
 Supply local copies of the public datasets when running the scripts.
 

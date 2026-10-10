@@ -1,4 +1,4 @@
-"""Log candidate-level decisions for the fairness experiments."""
+"""Log candidate-level decisions for the W16 criterion-disagreement experiment."""
 
 from __future__ import annotations
 
@@ -153,6 +153,8 @@ COMPACT_VALUE_CODES: dict[str, dict[str, str]] = {
         "belgian_mtpl_group_aware": "6",
         "kuairand_group_blind": "7",
         "kuairand_group_aware": "8",
+        "bondora_group_blind": "9",
+        "bondora_group_aware": "10",
     },
     "family": {
         "natural_group_blind": "0",
@@ -217,6 +219,54 @@ BELGIAN_CATEGORICAL: tuple[str, ...] = (
     "fuel",
     "use",
     "fleet",
+)
+BONDORA_NUMERIC: tuple[str, ...] = (
+    "ApplicationSignedHour",
+    "ApplicationSignedWeekday",
+    "Age",
+    "AppliedAmount",
+    "Amount",
+    "Interest",
+    "LoanDuration",
+    "MonthlyPayment",
+    "IncomeFromPrincipalEmployer",
+    "IncomeFromPension",
+    "IncomeFromFamilyAllowance",
+    "IncomeFromSocialWelfare",
+    "IncomeFromLeavePay",
+    "IncomeFromChildSupport",
+    "IncomeOther",
+    "IncomeTotal",
+    "ExistingLiabilities",
+    "LiabilitiesTotal",
+    "RefinanceLiabilities",
+    "DebtToIncome",
+    "FreeCash",
+    "MonthlyPaymentDay",
+    "NoOfPreviousLoansBeforeLoan",
+    "AmountOfPreviousLoansBeforeLoan",
+    "PreviousRepaymentsBeforeLoan",
+    "PreviousEarlyRepaymentsCountBeforeLoan",
+)
+BONDORA_CATEGORICAL: tuple[str, ...] = (
+    "NewCreditCustomer",
+    "VerificationType",
+    "LanguageCode",
+    "Gender",
+    "Country",
+    "UseOfLoan",
+    "Education",
+    "MaritalStatus",
+    "EmploymentStatus",
+    "EmploymentDurationCurrentEmployer",
+    "WorkExperience",
+    "OccupationArea",
+    "HomeOwnershipType",
+)
+BONDORA_OUTCOMES: tuple[str, ...] = (
+    "Status",
+    "PrincipalWriteOffs",
+    "InterestAndPenaltyPaymentsMade",
 )
 KUAIRAND_LOG_COLUMNS: tuple[str, ...] = (
     "user_id",
@@ -300,8 +350,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True)
     parser.add_argument(
         "--dataset",
-        choices=("australian_mtpl", "belgian_mtpl", "kuairand"),
+        choices=("australian_mtpl", "belgian_mtpl", "bondora", "kuairand"),
         default="australian_mtpl",
+    )
+    parser.add_argument(
+        "--model-variant",
+        choices=("both", "group_blind", "group_aware"),
+        default="both",
     )
     parser.add_argument("--max-rows", type=int, default=0)
     parser.add_argument("--sample-seed", type=int, default=42)
@@ -337,7 +392,7 @@ def read_csv_input(path: str, dataset: str) -> pd.DataFrame:
     lowered = path.lower()
     if not lowered.endswith((".csv", ".csv.gz")):
         raise RuntimeError(
-            f"Fairness runs for {dataset} require a concrete CSV input."
+            f"Buck W16 {dataset} runs require a concrete CSV input."
         )
     return pd.read_csv(path)
 
@@ -395,6 +450,33 @@ def load_belgian_data(path: str) -> LoadedDataset:
     )
 
 
+def load_bondora_data(path: str) -> LoadedDataset:
+    columns = list(BONDORA_NUMERIC + BONDORA_CATEGORICAL + BONDORA_OUTCOMES)
+    frame = pd.read_csv(path, usecols=columns, low_memory=False)
+    frame = frame.loc[frame["Status"] == "Repaid"].reset_index(drop=True)
+    loss = pd.to_numeric(frame["PrincipalWriteOffs"], errors="coerce").fillna(0)
+    value = pd.to_numeric(
+        frame["InterestAndPenaltyPaymentsMade"], errors="coerce"
+    ).fillna(0)
+    label = (loss > 0).astype(np.float32).to_numpy()
+    value_array = value.to_numpy(dtype=np.float32) * (1.0 - label)
+    gender = pd.to_numeric(frame["Gender"], errors="coerce")
+    valid = (((loss.to_numpy(dtype=np.float32) + value_array) > 0) & gender.isin([0, 1])).to_numpy()
+    kept = frame.loc[valid, list(BONDORA_NUMERIC + BONDORA_CATEGORICAL)]
+    groups = gender.loc[valid].astype(int).map({0: "Male", 1: "Female"}).to_numpy()
+    return LoadedDataset(
+        name="bondora",
+        frame=kept.reset_index(drop=True),
+        label=label[valid],
+        loss=loss.loc[valid].to_numpy(dtype=np.float32),
+        value=value_array[valid],
+        groups=groups,
+        numeric_columns=BONDORA_NUMERIC,
+        categorical_columns=BONDORA_CATEGORICAL,
+        group_column="Gender",
+    )
+
+
 def load_kuairand_data(args: argparse.Namespace) -> LoadedDataset:
     path = Path(args.input)
     logs = pd.read_csv(
@@ -448,6 +530,8 @@ def load_dataset(args: argparse.Namespace) -> LoadedDataset:
         return load_australian_data(args.input)
     if args.dataset == "belgian_mtpl":
         return load_belgian_data(args.input)
+    if args.dataset == "bondora":
+        return load_bondora_data(args.input)
     if args.dataset == "kuairand":
         return load_kuairand_data(args)
     raise ValueError(f"Unknown dataset: {args.dataset}")
@@ -979,20 +1063,35 @@ def run_model(
     scores = x_eval @ coef + intercept
     bce_scores = x_eval @ bce_coef + bce_intercept
 
-    value_coef, value_intercept = fit_log1p_regression(
+    value_coef, value_intercept, value_location, value_scale = fit_raw_mean_regression(
         x_train,
         value_train,
         steps=max(100, args.epochs * 50),
         seed=seed + 1,
     )
-    loss_coef, loss_intercept = fit_log1p_regression(
+    loss_coef, loss_intercept, loss_location, loss_scale = fit_raw_mean_regression(
         x_train,
         loss_train,
         steps=max(100, args.epochs * 50),
         seed=seed + 2,
     )
-    a_hat = predict_log1p_regression(x_eval, value_coef, value_intercept)
-    b_hat = predict_log1p_regression(x_eval, loss_coef, loss_intercept)
+    a_hat = np.maximum(
+        predict_raw_mean_regression(
+            x_eval,
+            value_coef,
+            value_intercept,
+            value_location,
+            value_scale,
+        ),
+        1e-9,
+    )
+    b_hat = predict_raw_mean_regression(
+        x_eval,
+        loss_coef,
+        loss_intercept,
+        loss_location,
+        loss_scale,
+    )
     val_count = len(x_val)
     return (
         scores[:val_count],
@@ -1061,15 +1160,20 @@ def fit_weighted_logistic(
     return coef.astype(np.float32), float(intercept)
 
 
-def fit_log1p_regression(
+def fit_raw_mean_regression(
     x: np.ndarray,
     y: np.ndarray,
     steps: int,
     seed: int,
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, float, float, float]:
     rng = np.random.default_rng(seed)
     x64 = x.astype(np.float64)
-    target = np.log1p(np.maximum(y.astype(np.float64), 0.0))
+    target = np.maximum(y.astype(np.float64), 0.0)
+    location = float(target.mean()) if len(target) else 0.0
+    scale_value = float(target.std(ddof=0)) if len(target) else 1.0
+    if scale_value <= 1e-12:
+        scale_value = 1.0
+    target = (target - location) / scale_value
     coef = rng.normal(0.0, 1e-3, size=x64.shape[1])
     intercept = float(target.mean()) if len(target) else 0.0
     coef_m = np.zeros_like(coef)
@@ -1100,16 +1204,18 @@ def fit_log1p_regression(
             * (intercept_m / (1.0 - beta1**step))
             / (math.sqrt(intercept_v / (1.0 - beta2**step)) + 1e-8)
         )
-    return coef.astype(np.float32), float(intercept)
+    return coef.astype(np.float32), float(intercept), location, scale_value
 
 
-def predict_log1p_regression(
+def predict_raw_mean_regression(
     x: np.ndarray,
     coef: np.ndarray,
     intercept: float,
+    location: float,
+    scale_value: float,
 ) -> np.ndarray:
     linear = x.astype(np.float64) @ coef.astype(np.float64) + intercept
-    return np.expm1(np.clip(linear, 0.0, 20.0)).astype(np.float32)
+    return np.maximum(linear * scale_value + location, 0.0).astype(np.float32)
 
 
 def weighted_logistic_rows(
@@ -1148,7 +1254,10 @@ def run_natural(
     for seed in range(args.seed_start, args.seed_start + args.seeds):
         outer_train, test_idx = stratified_split(indices, label, 0.20, seed)
         train_idx, val_idx = stratified_split(outer_train, label, 0.20, 10_000 + seed)
-        for variant, include_group in (("group_blind", False), ("group_aware", True)):
+        variants = (("group_blind", False), ("group_aware", True))
+        if args.model_variant != "both":
+            variants = tuple(item for item in variants if item[0] == args.model_variant)
+        for variant, include_group in variants:
             x_train, x_val, x_test = transform_split(
                 frame,
                 train_idx,
