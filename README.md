@@ -1,4 +1,6 @@
-# WSDM FSL Public Runners
+# Yielding Fairness
+
+Public repository: [atavory/yielding_fairness](https://github.com/atavory/yielding_fairness).
 
 This repository contains public Python runners for the value-weighted blocking
 experiments.  It intentionally excludes raw datasets, frozen result CSVs,
