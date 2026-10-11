@@ -43,8 +43,9 @@ bank in [the 20261012 evidence archive](artifacts/frozen_normalized_price_eviden
 At the `.95` validation capture floor, the mean of seven source medians is
 +0.2185 (two-sided source p=0.3071); across all ten recorded sources it is
 +0.0863 (p=0.6007). These comparisons do **not** establish statistically
-significant average group-aware superiority. Historical stronger results
-used a truncated bank with different effective price units.
+significant average group-aware superiority. An independent wider global grid gives ten-source mean +0.0202 (p=0.8990),
+with the same conclusion. Historical stronger results used a truncated bank
+with different effective price units.
 
 The new archive retains every original physical policy, all recorded sources,
 three measurement units, validation coverage traces and frozen LP weights.

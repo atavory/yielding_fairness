@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import json
 import math
 import statistics
 from collections import defaultdict
@@ -193,6 +194,23 @@ ELIGIBILITY_FIELDS: tuple[str, ...] = (
     "selected_group_lambda",
 )
 
+AXIS_FIELDS: tuple[str, ...] = (
+    "dataset",
+    "source",
+    "seed",
+    "family",
+    "target",
+    "account_normalization",
+    "validation_r_all",
+    "lambda_count",
+    "lambda_min",
+    "lambda_max",
+    "physical_lambda_count",
+    "normalized_lambda_json",
+    "account_physical_lambda_json",
+    "group_physical_lambda_json",
+)
+
 EPS = 1e-12
 
 
@@ -245,6 +263,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--materialities", default="0,0.01")
     parser.add_argument("--lambda-grid", default="")
     parser.add_argument(
+        "--physical-lambda-grid",
+        default="",
+        help=(
+            "Historical physical lambda grid to preserve on the normalized "
+            "axis. With pooled account normalization, r_all times these values "
+            "are added so original account score masks are reachable exactly."
+        ),
+    )
+    parser.add_argument(
+        "--account-normalization",
+        choices=("original", "pooled_validation_rate"),
+        default="original",
+        help=(
+            "Account-penalty scaling. The historical bank uses the raw lambda "
+            "as a ratio shift; the corrected matched bank divides by the pooled "
+            "validation amount rate, aligning units with group-rate penalties."
+        ),
+    )
+    parser.add_argument(
         "--selection-output",
         type=Path,
         default=root / "results/csvs/bandha_cached_group_awareness_selection.csv",
@@ -269,6 +306,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=root / "results/csvs/bandha_cached_group_awareness_eligibility.csv",
     )
+    parser.add_argument("--axis-output", type=Path)
     return parser.parse_args()
 
 
@@ -303,6 +341,14 @@ def fmt(value: float) -> str:
 
 
 def source_name(dataset: str) -> str:
+    if dataset == "beMTPL97":
+        return "Belgian MTPL"
+    if dataset.startswith("freMPL"):
+        return "freMPL"
+    if dataset.startswith("norauto"):
+        return "Norwegian auto"
+    if dataset.startswith("swmotorcycle"):
+        return "Swedish motorcycle"
     if dataset.startswith("australian_"):
         return "Australian MTPL"
     if dataset.startswith("belgian_"):
@@ -456,6 +502,62 @@ def group_base_rates(candidates: list[Candidate]) -> dict[str, float]:
     return {group: value / total_rows for group, value in by_group.items()}
 
 
+def pooled_rate(rates: dict[str, float]) -> float:
+    return sum(value for value in rates.values() if value > 0.0)
+
+
+def cell_lambda_values(
+    base_lambdas: list[float],
+    physical_lambdas: list[float],
+    rates: dict[str, float],
+    account_normalization: str,
+) -> list[float]:
+    values = set(base_lambdas)
+    values.update(physical_lambdas)
+    if account_normalization == "pooled_validation_rate":
+        r_all = pooled_rate(rates)
+        values.update(r_all * lambd for lambd in physical_lambdas)
+    elif account_normalization != "original":
+        raise ValueError(f"unknown account normalization: {account_normalization}")
+    return sorted({round(max(0.0, value), 12) for value in values})
+
+
+def axis_row(
+    dataset: str,
+    family: str,
+    seed: str,
+    target: float,
+    rates: dict[str, float],
+    lambdas: list[float],
+    physical_lambdas: list[float],
+    account_normalization: str,
+) -> dict[str, str]:
+    r_all = pooled_rate(rates)
+    if account_normalization == "pooled_validation_rate" and r_all > 0.0:
+        account_physical = [lambd / r_all for lambd in lambdas]
+    else:
+        account_physical = list(lambdas)
+    return {
+        "dataset": dataset,
+        "source": source_name(dataset),
+        "seed": seed,
+        "family": family,
+        "target": fmt(target),
+        "account_normalization": account_normalization,
+        "validation_r_all": fmt(r_all),
+        "lambda_count": str(len(lambdas)),
+        "lambda_min": fmt(min(lambdas) if lambdas else float("nan")),
+        "lambda_max": fmt(max(lambdas) if lambdas else float("nan")),
+        "physical_lambda_count": str(len(physical_lambdas)),
+        "normalized_lambda_json": json.dumps(lambdas, separators=(",", ":")),
+        "account_physical_lambda_json": json.dumps(
+            account_physical,
+            separators=(",", ":"),
+        ),
+        "group_physical_lambda_json": json.dumps(lambdas, separators=(",", ":")),
+    }
+
+
 def policy_scores(
     candidates: list[Candidate],
     policy: str,
@@ -463,8 +565,10 @@ def policy_scores(
     high_group: str,
     low_group: str,
     rates: dict[str, float],
+    account_normalization: str = "original",
 ) -> list[float]:
     scores: list[float] = []
+    r_all = pooled_rate(rates)
     for candidate in candidates:
         if candidate.estimated_value <= 0.0:
             scores.append(candidate.base_ratio if candidate.base_ratio > 0.0 else 0.0)
@@ -472,7 +576,15 @@ def policy_scores(
         adjusted_loss = candidate.base_ratio * candidate.estimated_value
         if candidate.complaint_any:
             if policy == "account_penalty":
-                adjusted_loss -= lambd * candidate.estimated_value
+                denominator = 1.0
+                if account_normalization == "pooled_validation_rate":
+                    denominator = r_all
+                elif account_normalization != "original":
+                    raise ValueError(
+                        f"unknown account normalization: {account_normalization}"
+                    )
+                if denominator > 0.0:
+                    adjusted_loss -= lambd * candidate.estimated_value / denominator
             elif policy == "group_penalty":
                 if candidate.group == high_group and rates.get(high_group, 0.0) > 0.0:
                     adjusted_loss -= lambd * candidate.estimated_value / rates[high_group]
@@ -595,10 +707,27 @@ def direct_policy_result(
     high_group: str,
     low_group: str,
     rates: dict[str, float],
+    account_normalization: str = "original",
 ) -> PolicyResult:
-    validation_scores = policy_scores(validation, policy, lambd, high_group, low_group, rates)
+    validation_scores = policy_scores(
+        validation,
+        policy,
+        lambd,
+        high_group,
+        low_group,
+        rates,
+        account_normalization,
+    )
     threshold, validation_selected = select_for_budget(validation, validation_scores, target)
-    test_scores = policy_scores(test, policy, lambd, high_group, low_group, rates)
+    test_scores = policy_scores(
+        test,
+        policy,
+        lambd,
+        high_group,
+        low_group,
+        rates,
+        account_normalization,
+    )
     test_selected = [score >= threshold and score > 0.0 for score in test_scores]
     return PolicyResult(
         policy=policy,
@@ -722,7 +851,10 @@ def build_outputs(
     materialities: list[float],
     lambdas: list[float],
     target: float,
+    account_normalization: str = "original",
+    physical_lambdas: list[float] | None = None,
 ) -> tuple[
+    list[dict[str, str]],
     list[dict[str, str]],
     list[dict[str, str]],
     list[dict[str, str]],
@@ -732,6 +864,8 @@ def build_outputs(
     selection_rows: list[dict[str, str]] = []
     comparison_rows: list[dict[str, str]] = []
     eligibility_rows: list[dict[str, str]] = []
+    axis_rows: list[dict[str, str]] = []
+    physical_lambdas = list(physical_lambdas or [])
     keys = sorted({(dataset, family, seed) for dataset, family, seed, _ in grouped})
     for dataset, family, seed in keys:
         validation = grouped.get((dataset, family, seed, "validation"), [])
@@ -741,6 +875,24 @@ def build_outputs(
         rates = group_base_rates(validation)
         if len(rates) != 2:
             continue
+        cell_lambdas = cell_lambda_values(
+            lambdas,
+            physical_lambdas,
+            rates,
+            account_normalization,
+        )
+        axis_rows.append(
+            axis_row(
+                dataset,
+                family,
+                seed,
+                target,
+                rates,
+                cell_lambdas,
+                physical_lambdas,
+                account_normalization,
+            )
+        )
         baseline_scores = policy_scores(
             validation,
             "baseline",
@@ -772,10 +924,11 @@ def build_outputs(
                     high_group,
                     low_group,
                     rates,
+                    account_normalization,
                 ),
                 target,
             )
-            for lambd in lambdas
+            for lambd in cell_lambdas
         ]
         group_candidates = [
             thinned_policy_result(
@@ -788,10 +941,11 @@ def build_outputs(
                     high_group,
                     low_group,
                     rates,
+                    account_normalization,
                 ),
                 target,
             )
-            for lambd in lambdas
+            for lambd in cell_lambdas
         ]
         baseline = thinned_policy_result(
             fixed_policy_result(
@@ -1055,30 +1209,52 @@ def build_outputs(
                     ),
                 }
             )
-    return selection_rows, comparison_rows, summary_rows, source_rows, eligibility_rows
+    return (
+        selection_rows,
+        comparison_rows,
+        summary_rows,
+        source_rows,
+        eligibility_rows,
+        axis_rows,
+    )
 
 
 def main() -> None:
     args = parse_args()
     datasets = set(args.dataset or DEFAULT_DATASETS)
     grouped = read_inputs(args.input, datasets, args.target)
-    selection_rows, comparison_rows, summary_rows, source_rows, eligibility_rows = build_outputs(
+    (
+        selection_rows,
+        comparison_rows,
+        summary_rows,
+        source_rows,
+        eligibility_rows,
+        axis_rows,
+    ) = build_outputs(
         grouped,
         parse_float_list(args.capture_floors),
         parse_float_list(args.materialities),
         parse_lambdas(args.lambda_grid),
         args.target,
+        args.account_normalization,
+        parse_lambdas(args.physical_lambda_grid)
+        if args.physical_lambda_grid.strip()
+        else [],
     )
     write_rows(args.selection_output, selection_rows, SELECTION_FIELDS)
     write_rows(args.comparison_output, comparison_rows, COMPARISON_FIELDS)
     write_rows(args.summary_output, summary_rows, SUMMARY_FIELDS)
     write_rows(args.source_output, source_rows, SOURCE_FIELDS)
     write_rows(args.eligibility_output, eligibility_rows, ELIGIBILITY_FIELDS)
+    if args.axis_output is not None:
+        write_rows(args.axis_output, axis_rows, AXIS_FIELDS)
     print(f"wrote {args.selection_output} ({len(selection_rows)} rows)")
     print(f"wrote {args.comparison_output} ({len(comparison_rows)} rows)")
     print(f"wrote {args.summary_output} ({len(summary_rows)} rows)")
     print(f"wrote {args.source_output} ({len(source_rows)} rows)")
     print(f"wrote {args.eligibility_output} ({len(eligibility_rows)} rows)")
+    if args.axis_output is not None:
+        print(f"wrote {args.axis_output} ({len(axis_rows)} rows)")
     print("main cached value-unit ablation, floor=0.95, raw closure, materiality=0.01")
     for row in summary_rows:
         if (
