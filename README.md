@@ -3,9 +3,10 @@
 Public repository: [atavory/yielding_fairness](https://github.com/atavory/yielding_fairness).
 
 This repository contains public Python runners for the value-weighted blocking
-experiments.  It intentionally excludes raw datasets, frozen result CSVs,
-aggregation scripts, and plotting scripts.  Those artifacts live in the
-submission evidence bundle.
+experiments.  Raw datasets remain external. The frozen paper-result inputs and original
+table/figure generators are available in
+[the reproduction archive](artifacts/frozen_paper_evidence_20261011.zip); see
+[the complete commands and artifact map](docs/paper_reproduction.md).
 
 The package includes:
 
