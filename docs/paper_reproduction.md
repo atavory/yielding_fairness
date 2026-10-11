@@ -61,3 +61,7 @@ datasets and their cohort/split settings; the archive does not grant access
 to restricted credit or mortgage downloads. The full frozen Figure 4 candidate
 bank is larger than this aggregate bundle; its data-project provenance retains
 the portable candidate transports, hydration hashes, and zero-price replay.
+
+## Uniform W-BCE update
+
+The frozen bundle now uses data revision `4f6b29d` after complete W-BCE group-policy regeneration. Its primary value-unit cell-median lift is +0.5447 across 180 paired cells; the mean of seven source medians is +0.4458 (two-sided source t p=0.002938). Six source medians are positive and one is tied. All twelve scientific table and figure outputs were independently regenerated from this bundle and matched its manifest.
