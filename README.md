@@ -38,18 +38,20 @@ This replaces the earlier log1p-target auxiliary regressions. Main raw W-BCE
 training was already correct. The separately labelled log-damped W-BCE
 score-learning robustness comparison remains distinct.
 
-The regenerated seven-source comparison at the `.95` validation capture floor
-has median held-out closure lift +0.5010, source signs 7/0/0, and two-sided
-source-cluster p=0.008106 over 149 eligible paired cells. The previous +0.6131
-result used 180 cells and superseded log proxies; the eligibility change is
-part of the old/new comparison. Fixed block-count and blocked-value parity
-comparisons are mixed, so these numbers do not support dominance over every
-parity baseline. See [the audit](docs/code_algorithm_audit_20261010.md).
+The current arXiv preparation uses the corrected normalized, enlarged price
+bank in [the 20261012 evidence archive](artifacts/frozen_normalized_price_evidence_20261012.zip).
+At the `.95` validation capture floor, the mean of seven source medians is
++0.2185 (two-sided source p=0.3071); across all ten recorded sources it is
++0.0863 (p=0.6007). These comparisons do **not** establish statistically
+significant average group-aware superiority. Historical stronger results
+used a truncated bank with different effective price units.
 
-Independent replay checked 120 splits, 360 saved models and 1,335,600 candidate
-rows against raw inputs in the evidence bundle. Exact objection-mass reporting
-is now complete for 2,484/2,484 value-unit selected policies; final paper
-rendering/review remain unfinished.
+The new archive retains every original physical policy, all recorded sources,
+three measurement units, validation coverage traces and frozen LP weights.
+Independent checks passed all 2,880 LP cells and 192 original scalar-policy
+replays. It includes all frozen inputs needed to independently verify LP
+optima and regenerate manuscript tables without raw datasets. Exact candidate
+re-evaluation requires the external frozen candidate logs listed by checksum.
 
 ## Inputs
 

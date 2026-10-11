@@ -1,3 +1,12 @@
+# Current corrected arXiv evidence
+
+Use `artifacts/frozen_normalized_price_evidence_20261012.zip` for the current
+normalized/enlarged group comparison and all ten-source sensitivities. Its
+README gives independent LP verification and table-generation commands.
+The corrected results are not statistically significant on source-average
+comparisons. The 20261011 archive and commands below are historical evidence,
+including the unchanged score-learning and descriptive account-frontier figures.
+
 # Paper table and figure reproduction
 
 The public repository supplies `artifacts/frozen_paper_evidence_20261011.zip`.
