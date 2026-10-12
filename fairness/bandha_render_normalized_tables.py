@@ -10,6 +10,15 @@ import statistics
 from pathlib import Path
 
 
+def source_lift_table(index):
+    values = index[("value", 0.95, "all", "median")]["source_values"]
+    rows = "\n".join(
+        f"{name} & {value:+.4f} " + r"\\" for name, value in values.items()
+    )
+    template = "\\begin{table}[t]\n\\centering\n\\caption{Corrected value-unit group-aware versus group-blind complaint\nclosure lift at the $.95$ capture floor. Each row is one source's median\npaired held-out lift. Negative and zero effects are retained.}\n\\label{tab:normalized-source-lifts}\n\\begin{tabular}{lr}\n\\toprule\nSource & Median lift \\\\\n\\midrule\n__ROWS__\n\\bottomrule\n\\end{tabular}\n\\end{table}\n"
+    return template.replace("__ROWS__", rows)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", type=Path, required=True)
@@ -82,6 +91,9 @@ def main():
             )
     table += "\\bottomrule\n\\end{tabular}\n"
     (args.output / "bandha_normalized_currency_table.tex").write_text(table)
+    (args.output / "bandha_normalized_source_lifts.tex").write_text(
+        source_lift_table(index)
+    )
     provenance = {
         "inputs": {
             str(p): hashlib.sha256(p.read_bytes()).hexdigest()
