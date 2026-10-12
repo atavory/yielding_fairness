@@ -134,3 +134,11 @@ python3 viz/bandha_make_score_grouped_figure.py --base-dir .
 
 The archive includes the generator, frozen summary CSVs, vector figure, and
 input/output checksums. It regenerates the chart without retraining.
+
+The group-denominator schematic (Figure 5) is generated from source with:
+
+```bash
+python3 viz/make_wsdm_objection_figures.py --series kdd --figures group-denominator --output-dir results/figures
+```
+
+Its group-outline cross-reference is in the manuscript caption.
