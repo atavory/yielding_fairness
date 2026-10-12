@@ -121,3 +121,16 @@ python fairness/verify_public_auto_repro.py --raw-repo <path/to/CASdatasets>
 See `fairness/RUN_COMMANDS.md` for Belgian MTPL and KuaiRand examples.  Save the Git
 commit, exact command, pinned requirements, raw input source URLs, raw input
 hashes, generated CSV paths, and CSV checksums with any run.
+
+## Reproduce grouped Figure 3
+
+The single-column grouped score chart uses the original twenty paired means
+and 95% intervals. Extract `artifacts/bandha_score_grouped_figure_20261012.zip`
+into a separate directory, install its `requirements.txt`, and run:
+
+```bash
+python3 viz/bandha_make_score_grouped_figure.py --base-dir .
+```
+
+The archive includes the generator, frozen summary CSVs, vector figure, and
+input/output checksums. It regenerates the chart without retraining.
